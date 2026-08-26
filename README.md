@@ -103,14 +103,16 @@ sobald sie hinter einem Proxy läuft).
 
 ---
 
-## Was V1 kann
+## Was die App kann
 
 - **Aufzeichnen** direkt im Browser (GPS), Pausen, Crash-sicheres Autosave in IndexedDB
 - **Import** von GPX, TCX und FIT (inkl. Herzfrequenz, Kadenz, Leistung, Temperatur),
   Drag & Drop mehrerer Dateien, Duplikaterkennung pro Datei-Hash
-- **Analyse**: Karte (SVG, ohne externe Kacheln), Höhenprofil, Pace-/HF-/Leistungsdiagramme,
-  Kilometer-Splits, Statistiken (Wochen/Monate/Sportarten), Bestzeiten (schnellster km,
-  bestes 5 km/10 km)
+- **Analyse**: interaktive Karte (Leaflet + OpenStreetMap-Kacheln, per Schalter abschaltbar;
+  komplett offline als SVG-Track), Höhenprofil, Pace-/HF-/Leistungsdiagramme mit Flächenverlauf,
+  Kilometer-Splits mit Rundenvergleich, Statistiken, Bestzeiten
+- **GPS-Aufzeichnung v2**: Status-Engine (HTTPS-Hinweis/Berechtigungen/GPS-Fix), Genauigkeitsanzeige,
+  Screen-Wake-Lock, Crash-sicheres Autosave
 - **Verwaltung**: Suche, Filter, Tags/Notizen, Löschen, GPX-Export
 - **Sicherheit**: Login (scrypt-Hashing), Bearer-Token, Rate-Limiting beim Login,
   systemd-Hardening, Upload-Limits, Pfad-Traversal-Schutz beim Speichern der Originale

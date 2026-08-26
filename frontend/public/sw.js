@@ -1,4 +1,4 @@
-const CACHE_NAME = 'localtrack-v1'
+const CACHE_NAME = 'localtrack-v2'
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icons/icon.svg']
 
 self.addEventListener('install', (event) => {

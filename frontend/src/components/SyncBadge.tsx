@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { subscribe, pendingCount, retryFailedNow } from '../sync/engine'
+import { Icon } from './Icon'
 
 export function SyncBadge() {
   const [pending, setPending] = useState(0)
@@ -27,10 +28,17 @@ export function SyncBadge() {
     <button
       className={`sync-badge ${online ? '' : 'offline'}`}
       onClick={() => (pending > 0 ? void retryFailedNow() : undefined)}
-      title={online ? 'Synchronisierung starten' : 'Offline – wird automatisch synchronisiert'}
+      title={online ? 'Jetzt synchronisieren' : 'Offline – wird automatisch synchronisiert'}
     >
-      {!online && `Offline${pending ? ` · ${pending} lokal` : ''}`}
-      {online && pending > 0 && `${pending} in Warteschlange`}
+      {!online ? (
+        <>
+          <Icon name="cloud-off" size={14} /> {pending > 0 ? `${pending} lokal` : 'offline'}
+        </>
+      ) : (
+        <>
+          <Icon name="refresh" size={14} /> {pending} in Warteschlange
+        </>
+      )}
     </button>
   )
 }

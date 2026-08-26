@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, setToken } from '../api/client'
 import type { HealthInfo } from '../api/client'
+import { Icon } from '../components/Icon'
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -18,33 +19,23 @@ export function LoginPage() {
       .catch(() => setError('Server nicht erreichbar'))
   }, [])
 
-  const submit = async (event: React.FormEvent) => {
+  async function submit(event: React.FormEvent) {
     event.preventDefault()
     setBusy(true)
     setError(null)
     try {
       if (setupComplete) {
-        const result = await api.post<{ token: string }>('/api/v1/auth/login', {
-          username,
-          password,
-        })
+        const result = await api.post<{ token: string }>('/api/v1/auth/login', { username, password })
         setToken(result.token)
       } else {
-        if (password.length < 8) {
-          throw new Error('Passwort braucht mindestens 8 Zeichen')
-        }
-        const result = await api.post<{ token: string }>('/api/v1/auth/setup', {
-          username,
-          password,
-        })
+        if (password.length < 8) throw new Error('Passwort braucht mindestens 8 Zeichen')
+        const result = await api.post<{ token: string }>('/api/v1/auth/setup', { username, password })
         setToken(result.token)
       }
       navigate('/', { replace: true })
       window.location.reload()
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message === 'Failed to fetch' ? 'Server nicht erreichbar' : friendly(err))
-      }
+      setError(friendly(err))
     } finally {
       setBusy(false)
     }
@@ -53,24 +44,17 @@ export function LoginPage() {
   return (
     <div className="auth-wrap">
       <form className="auth-card" onSubmit={submit}>
-        <h1>LocalTrack</h1>
+        <h1>
+          <span className="brand-mark"><Icon name="activity" size={18} /></span>
+          LocalTrack
+        </h1>
         <p className="auth-sub">
-          {setupComplete === false
-            ? 'Ersten Benutzer anlegen (Einrichtung)'
-            : 'Anmelden'}
+          {setupComplete === false ? 'Ersten Benutzer anlegen (Einrichtung)' : 'Anmelden für deine Trainingsdaten'}
         </p>
-        <label>
-          Benutzername
-          <input
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            minLength={3}
-            required
-            autoComplete="username"
-          />
+        <label>Benutzername
+          <input value={username} onChange={(e) => setUsername(e.target.value)} minLength={3} required autoComplete="username" />
         </label>
-        <label>
-          Passwort
+        <label>Passwort
           <input
             type="password"
             value={password}
@@ -80,10 +64,17 @@ export function LoginPage() {
             autoComplete={setupComplete ? 'current-password' : 'new-password'}
           />
         </label>
-        {error && <div className="form-error">{error}</div>}
-        <button type="submit" disabled={busy || setupComplete === null}>
-          {setupComplete ? 'Anmelden' : 'Einrichten'}
+        {error && (
+          <div className="form-error">
+            <Icon name="alert" size={16} /> {error}
+          </div>
+        )}
+        <button type="submit" className="primary big" disabled={busy || setupComplete === null}>
+          {setupComplete ? 'Anmelden' : 'Einrichten & Starten'}
         </button>
+        <p className="muted hint" style={{ textAlign: 'center', marginTop: '.9rem' }}>
+          Lokale Sportdatenplattform · keine Cloud · keine Tracker
+        </p>
       </form>
     </div>
   )
@@ -91,9 +82,7 @@ export function LoginPage() {
 
 function friendly(err: unknown): string {
   const message = err instanceof Error ? err.message : String(err)
-  if (message.includes('401') || message.includes('Invalid')) {
-    return 'Benutzername oder Passwort falsch'
-  }
-  if (message.includes('429')) return 'Zu viele Versuche, kurz warten'
+  if (message.includes('401') || message.includes('Invalid')) return 'Benutzername oder Passwort falsch'
+  if (message.includes('429')) return 'Zu viele Versuche – kurz warten'
   return message || 'Unbekannter Fehler'
 }
