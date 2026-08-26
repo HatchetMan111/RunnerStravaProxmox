@@ -1,0 +1,28 @@
+[Unit]
+Description=LocalTrack - local sports activity platform
+Documentation=https://github.com/HatchetMan111/RunnerStravaProxmox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=localtrack
+Group=localtrack
+EnvironmentFile=/etc/default/localtrack
+WorkingDirectory=/opt/localtrack
+ExecStart=/opt/localtrack/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${LOCALTRACK_PORT}
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/localtrack/data
+
+[Install]
+WantedBy=multi-user.target
