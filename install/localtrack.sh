@@ -64,9 +64,26 @@ require_host() {
   ok "Proxmox $(pveversion)"
 }
 
+vmid_in_use() {
+  local id="$1"
+  if pct status "${id}" >/dev/null 2>&1; then
+    return 0
+  fi
+  if qm status "${id}" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
 next_free_ctid() {
+  local candidate
+  candidate="$(pvesh get /cluster/nextid 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "${candidate}" =~ ^[0-9]+$ ]] && (( candidate >= 100 && candidate <= 999 )); then
+    echo "${candidate}"
+    return
+  fi
   for candidate in $(seq 100 999); do
-    if ! pct status "${candidate}" >/dev/null 2>&1; then
+    if ! vmid_in_use "${candidate}"; then
       echo "${candidate}"
       return
     fi
@@ -133,6 +150,11 @@ create_or_reuse_ct() {
     ok "Container ${CTID} existiert bereits – wird verwendet."
     pct start "${CTID}" >/dev/null 2>&1 || true
     return
+  fi
+  if qm status "${CTID}" >/dev/null 2>&1; then
+    echo "FEHLER: VMID ${CTID} ist auf diesem Node durch eine VM belegt." >&2
+    echo "Bitte eine andere CT-ID wählen, z. B.:  CTID=200 bash -c \"\$(wget -qLO - ...)\"" >&2
+    exit 1
   fi
   local template
   template="$(ensure_template)"
