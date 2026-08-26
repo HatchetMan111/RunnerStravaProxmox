@@ -201,7 +201,7 @@ inner_install() {
   cat <<'INNER'
 set -Eeuo pipefail
 
-export LC_ALL=C LANG=C LANGUAGE=C
+export LC_ALL=C.UTF-8 LANG=C.UTF-8 LANGUAGE=en
 export DEBIAN_FRONTEND=noninteractive
 ENV_FILE="/etc/default/localtrack"
 APP_DIR="/opt/localtrack"
@@ -275,8 +275,28 @@ if [[ "$(pg_sql "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")" == "1" ]];
 else
   pg_sql "CREATE ROLE \"${DB_USER}\" LOGIN PASSWORD '${DB_PASS}'" >/dev/null
 fi
-if [[ "$(pg_sql "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")" != "1" ]]; then
-  (cd /tmp && su postgres -c "createdb -O ${DB_USER} ${DB_NAME}") >/dev/null
+if [[ "$(pg_sql "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")" == "1" ]]; then
+  ENC="$(pg_sql "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='${DB_NAME}'")"
+  EMPTY="$(pg_sql "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_catalog='${DB_NAME}'")"
+  if [[ "${ENC}" != "UTF8"* && "${EMPTY}" == "0" ]]; then
+    echo ">> Datenbank '${DB_NAME}' hat Encoding ${ENC} (leer) – neu anlegen als UTF8"
+    pg_sql "DROP DATABASE \"${DB_NAME}\"" >/dev/null
+    (cd /tmp && su postgres -c "createdb -O ${DB_USER} -E UTF8 -T template0 ${DB_NAME}") >/dev/null
+  elif [[ "${ENC}" != "UTF8"* ]]; then
+    echo "FEHLER: Datenbank '${DB_NAME}' hat Encoding '${ENC}', ist aber nicht leer." >&2
+    echo "Manuell migrieren oder leeren: su postgres -c 'psql -c \"DROP DATABASE ${DB_NAME}\"'" >&2
+    echo "Danach den Installer erneut ausführen." >&2
+    exit 1
+  fi
+else
+  (cd /tmp && su postgres -c "createdb -O ${DB_USER} -E UTF8 -T template0 ${DB_NAME}") >/dev/null
+fi
+
+FINAL_ENC="$(pg_sql "SELECT pg_encoding_to_char(encoding) FROM pg_database WHERE datname='${DB_NAME}'")"
+if [[ "${FINAL_ENC}" != "UTF8"* ]]; then
+  echo "FEHLER: Datenbank-Encoding ist '${FINAL_ENC}' statt UTF8 (durch LC_ALL=C).)" >&2
+  echo "Lösung: Datenbank löschen und Installer erneut ausführen." >&2
+  exit 1
 fi
 
 echo ">> Systembenutzer anlegen"
@@ -300,6 +320,24 @@ echo ">> Python-Umgebung (pip install, 1-2 Minuten)"
 python3 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q .
+
+echo ">> Teste Anwendungs-Datenbankverbindung"
+.venv/bin/python - <<PY_PROBE
+import os, sys
+
+try:
+    from sqlalchemy import create_engine, text
+
+    url = open("${ENV_FILE}").read()
+    url = next(line.split("=", 1)[1].strip() for line in url.splitlines() if line.startswith("LOCALTRACK_DATABASE_URL="))
+    engine = create_engine(url)
+    version = engine.connect().execute(text("select pg_catalog.version()")).scalar()
+    assert isinstance(version, str), f"driver returned {type(version).__name__}, not str"
+    print("   verbunden mit:", version)
+except Exception as exc:
+    print(f"FEHLER: Datenbankverbindung fehlgeschlagen: {exc!r}", file=sys.stderr)
+    sys.exit(1)
+PY_PROBE
 
 echo ">> Frontend-Build (Node $(node --version))"
 if [[ ! -f frontend/dist/index.html ]]; then
