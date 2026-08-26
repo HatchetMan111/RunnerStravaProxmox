@@ -6,7 +6,7 @@
 # Variablen (per Environment ueberschreibbar, z. B.:
 #   CTID=150 REPO_URL=https://github.com/HatchetMan111/RunnerStravaProxmox.git REF=v0.1.0 bash -c "$(wget -qLO - ...)"):
 #
-set -euo pipefail
+set -Eeuo pipefail
 
 APP="localtrack"
 PORT="${PORT:-8080}"
@@ -199,11 +199,23 @@ wait_for_network() {
 
 inner_install() {
   cat <<'INNER'
-set -euo pipefail
+set -Eeuo pipefail
 
+export LC_ALL=C LANG=C LANGUAGE=C
 export DEBIAN_FRONTEND=noninteractive
 ENV_FILE="/etc/default/localtrack"
 APP_DIR="/opt/localtrack"
+
+on_error() {
+  local c=$?
+  echo "" >&2
+  echo "FEHLER: Installationsschritt fehlgeschlagen (Zeile ${LINENO}: ${BASH_COMMAND}, Exit ${c})" >&2
+  if systemctl cat localtrack.service >/dev/null 2>&1; then
+    echo "--- journalctl -u localtrack (letzte 40 Zeilen) ---" >&2
+    journalctl -u localtrack -n 40 --no-pager >&2 || true
+  fi
+}
+trap on_error ERR
 
 echo ">> apt update / Basispakete"
 apt-get update -qq
@@ -220,9 +232,14 @@ DB_NAME="localtrack"
 DB_PASS="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | sha256sum | cut -c1-48)"
 PORT_VALUE="${LT_PORT:-8080}"
 
+pg_sql() {
+  (cd /tmp && printf '%s' "$1" | su postgres -c 'psql -tA')
+}
+
 if [[ -f "${ENV_FILE}" ]]; then
   echo ">> Vorhandene Konfiguration übernehmen (idempotenter Lauf)"
   set -a
+  # shellcheck disable=SC1090
   source "${ENV_FILE}"
   set +a
   DB_USER="${LOCALTRACK_DB_USER:-${DB_USER}}"
@@ -242,10 +259,13 @@ EOF_ENV
   chmod 600 "${ENV_FILE}"
 fi
 
-su postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'\"" | grep -q 1 ||
-  su postgres -c "psql -c \"CREATE ROLE \\\"${DB_USER}\\\" LOGIN PASSWORD '${DB_PASS}';\"" >/dev/null
-su postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'\"" | grep -q 1 ||
-  su postgres -c "createdb -O \"${DB_USER}\" \"${DB_NAME}\"" >/dev/null
+echo ">> Datenbank-Benutzer und Schema prüfen"
+if [[ "$(pg_sql "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")" != "1" ]]; then
+  pg_sql "CREATE ROLE \"${DB_USER}\" LOGIN PASSWORD '${DB_PASS}'" >/dev/null
+fi
+if [[ "$(pg_sql "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")" != "1" ]]; then
+  (cd /tmp && su postgres -c "createdb -O ${DB_USER} ${DB_NAME}") >/dev/null
+fi
 
 echo ">> Systembenutzer anlegen"
 id localtrack >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin -d /var/lib/localtrack localtrack
@@ -264,7 +284,7 @@ else
   cd "${APP_DIR}"
 fi
 
-echo ">> Python-Umgebung"
+echo ">> Python-Umgebung (pip install, 1-2 Minuten)"
 python3 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q .
@@ -284,12 +304,22 @@ install -m 755 scripts/localtrack-cli.sh /usr/local/bin/localtrack
 systemctl daemon-reload
 systemctl enable --now localtrack.service
 
-sleep 3
-systemctl is-active --quiet localtrack.service ||
-  { journalctl -u localtrack -n 40 --no-pager; exit 1; }
-
-HTTP_CODE="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${PORT_VALUE}/api/v1/health)"
-[[ "${HTTP_CODE}" == "200" ]] || { journalctl -u localtrack -n 40 --no-pager; exit 1; }
+echo ">> Warte auf Health-Endpoint (bis zu 60 Sekunden)"
+HEALTH_OK=""
+CODE=""
+for _ in $(seq 1 30); do
+  CODE="$(curl -s -m 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT_VALUE}/api/v1/health" || true)"
+  if [[ "${CODE}" == "200" ]]; then
+    HEALTH_OK="yes"
+    break
+  fi
+  sleep 2
+done
+if [[ -z "${HEALTH_OK}" ]]; then
+  echo "FEHLER: /api/v1/health nicht erreichbar (letzter Wert: ${CODE:-keiner})" >&2
+  journalctl -u localtrack -n 60 --no-pager >&2 || true
+  exit 1
+fi
 INNER
 }
 
@@ -325,12 +355,18 @@ main() {
   wait_for_network
 
   info "Installation im Container läuft (kann einige Minuten dauern) …"
-  pct exec "${CTID}" -- env \
-    LT_REPO_URL="${REPO_URL}" \
-    LT_REF="${REF}" \
-    LT_PORT="${PORT}" \
-    DEBIAN_FRONTEND=noninteractive \
-    bash -s <<<"$(inner_install)" >/dev/null
+  local inner_tmp
+  inner_tmp="$(mktemp /tmp/${APP}-inner.XXXXXX.sh)"
+  inner_install >"${inner_tmp}"
+  pct push "${CTID}" "${inner_tmp}" "/usr/local/sbin/${APP}-install-inner.sh" >/dev/null
+  rm -f "${inner_tmp}"
+
+  if ! pct exec "${CTID}" -- bash "/usr/local/sbin/${APP}-install-inner.sh"; then
+    echo "" >&2
+    echo "FEHLER: Einrichtung im Container fehlgeschlagen – siehe Ausgabe oben." >&2
+    echo "Erneuter Lauf möglich: Container wird wiederverwendet (Installation ist idempotent)." >&2
+    exit 1
+  fi
 
   if pct exec "${CTID}" -- systemctl is-active --quiet "${APP}"; then
     ok "Service aktiv."
