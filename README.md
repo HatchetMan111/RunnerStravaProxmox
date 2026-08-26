@@ -17,7 +17,7 @@ Auf dem Proxmox-Host als root:
 bash -c "$(wget -qLO - https://raw.githubusercontent.com/HatchetMan111/RunnerStravaProxmox/main/install/localtrack.sh)"
 ```
 
-`REF` kann nach dem ersten Release auf ein Tag wie `v0.1.0` gesetzt werden,
+`REF` kann nach dem ersten Release auf ein Tag wie `v0.1.1` gesetzt werden,
 damit Installationen reproduzierbar sind (Entwicklung: `main`).
 Der Installer:
 

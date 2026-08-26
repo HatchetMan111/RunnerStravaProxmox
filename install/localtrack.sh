@@ -80,25 +80,49 @@ pick_storage() {
     return
   fi
   local first
-  first="$(pvesm status -content rootdir | awk 'NR>1 && $2=="active" {print $1; exit}')"
+  first="$(pvesm status -content rootdir 2>/dev/null | awk 'NR>1 && $3 ~ /active/ {print $1; exit}')"
   if [[ -z "${first}" ]]; then
-    echo "FEHLER: kein Storage mit rootdir-Inhalt gefunden (pvesm status)." >&2
+    first="$(pvesm status 2>/dev/null | awk 'NR>1 && $3 ~ /active/ && $2 ~ /^(dir|zfspool|lvm|lvmthin|btrfs|zfs|rbd)$/ {print $1; exit}')"
+  fi
+  if [[ -z "${first}" ]]; then
+    echo "FEHLER: kein aktiver Storage für Container-Root-Disks gefunden." >&2
+    echo "" >&2
+    echo "-- Aktuelle Storages ('pvesm status') --" >&2
+    pvesm status 2>&1 | sed 's/^/   /' >&2
+    echo "" >&2
+    echo "Abhilfe: STORAGE=<Name> als Umgebungsvariable setzen und Installer erneut ausführen," >&2
+    echo "z. B.:  STORAGE=local bash -c \"\$(wget -qLO - ...)\"" >&2
     exit 1
   fi
   echo "${first}"
 }
 
 ensure_template() {
-  local template="debian-12-standard_12.7-1_amd64.tar.zst"
   pveam update >/dev/null 2>&1 || true
-  if ! pveam list local 2>/dev/null | grep -q "${template}"; then
-  info "Lade Debian-12-Template herunter …"
-  pveam download local "${template}" >/dev/null || true
+
+  local tpl_storage
+  tpl_storage="$(pvesm status -content vztmpl 2>/dev/null | awk 'NR>1 && $3 ~ /active/ {print $1; exit}')"
+  if [[ -z "${tpl_storage}" ]]; then
+    tpl_storage="$(pvesm status 2>/dev/null | awk 'NR>1 && $3 ~ /active/ && ($2 == "dir" || $2 == "nfs" || $2 == "cifs" || $2 == "btrfs") {print $1; exit}')"
   fi
-  local found
-  found="$(pveam list local 2>/dev/null | awk '{print $1}' | grep "debian-12-standard" | head -n1 || true)"
+  if [[ -z "${tpl_storage}" ]]; then
+    echo "FEHLER: kein aktiver Storage für Container-Templates (vztmpl) gefunden." >&2
+    pvesm status 2>&1 | sed 's/^/   /' >&2
+    exit 1
+  fi
+
+  local found=""
+  found="$(pveam list "${tpl_storage}" 2>/dev/null | awk '{print $1}' | grep 'debian-12-standard' | head -n1 || true)"
   if [[ -z "${found}" ]]; then
-    echo "FEHLER: kein Debian-12-Template vorhanden." >&2
+    info "Lade Debian-12-Template auf '${tpl_storage}' herunter …"
+    pveam download "${tpl_storage}" debian-12-standard_12.7-1_amd64.tar.zst >/dev/null 2>&1 || true
+    found="$(pveam list "${tpl_storage}" 2>/dev/null | awk '{print $1}' | grep 'debian-12-standard' | head -n1 || true)"
+  fi
+  if [[ -z "${found}" ]]; then
+    echo "FEHLER: kein Debian-12-Standard-Template verfügbar." >&2
+    echo "Verfügbare System-Templates:" >&2
+    pveam available --section system 2>&1 | sed 's/^/   /' >&2 || true
+    echo "Manuell abhilfe: pveam download ${tpl_storage} <template>" >&2
     exit 1
   fi
   echo "${found}"
