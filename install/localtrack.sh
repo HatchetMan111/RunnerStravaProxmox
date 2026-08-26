@@ -217,6 +217,9 @@ on_error() {
 }
 trap on_error ERR
 
+: "${LT_REPO_URL:?LT_REPO_URL wurde nicht gesetzt}"
+: "${LT_REF:?LT_REF wurde nicht gesetzt}"
+
 echo ">> apt update / Basispakete"
 apt-get update -qq
 apt-get install -y -qq python3 python3-venv git curl ca-certificates postgresql nodejs npm openssl >/dev/null
@@ -236,7 +239,13 @@ pg_sql() {
   (cd /tmp && printf '%s' "$1" | su postgres -c 'psql -tA')
 }
 
-if [[ -f "${ENV_FILE}" ]]; then
+config_valid="no"
+if [[ -f "${ENV_FILE}" ]] && grep -q '^LOCALTRACK_DATABASE_URL=' "${ENV_FILE}" &&
+  grep -q '^LOCALTRACK_DB_PASSWORD=' "${ENV_FILE}"; then
+  config_valid="yes"
+fi
+
+if [[ "${config_valid}" == "yes" ]]; then
   echo ">> Vorhandene Konfiguration übernehmen (idempotenter Lauf)"
   set -a
   # shellcheck disable=SC1090
@@ -247,6 +256,7 @@ if [[ -f "${ENV_FILE}" ]]; then
   DB_PASS="${LOCALTRACK_DB_PASSWORD:-${DB_PASS}}"
   PORT_VALUE="${LOCALTRACK_PORT:-${PORT_VALUE}}"
 else
+  echo ">> Konfiguration neu schreiben (${ENV_FILE})"
   cat >"${ENV_FILE}" <<EOF_ENV
 LOCALTRACK_PORT=${PORT_VALUE}
 LOCALTRACK_DATA_DIR=/var/lib/localtrack/data
@@ -260,7 +270,9 @@ EOF_ENV
 fi
 
 echo ">> Datenbank-Benutzer und Schema prüfen"
-if [[ "$(pg_sql "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")" != "1" ]]; then
+if [[ "$(pg_sql "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'")" == "1" ]]; then
+  pg_sql "ALTER ROLE \"${DB_USER}\" WITH LOGIN PASSWORD '${DB_PASS}'" >/dev/null
+else
   pg_sql "CREATE ROLE \"${DB_USER}\" LOGIN PASSWORD '${DB_PASS}'" >/dev/null
 fi
 if [[ "$(pg_sql "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'")" != "1" ]]; then
@@ -361,7 +373,11 @@ main() {
   pct push "${CTID}" "${inner_tmp}" "/usr/local/sbin/${APP}-install-inner.sh" >/dev/null
   rm -f "${inner_tmp}"
 
-  if ! pct exec "${CTID}" -- bash "/usr/local/sbin/${APP}-install-inner.sh"; then
+  if ! pct exec "${CTID}" -- env \
+    LT_REPO_URL="${REPO_URL}" \
+    LT_REF="${REF}" \
+    LT_PORT="${PORT}" \
+    bash "/usr/local/sbin/${APP}-install-inner.sh"; then
     echo "" >&2
     echo "FEHLER: Einrichtung im Container fehlgeschlagen – siehe Ausgabe oben." >&2
     echo "Erneuter Lauf möglich: Container wird wiederverwendet (Installation ist idempotent)." >&2
